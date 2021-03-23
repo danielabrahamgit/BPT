@@ -213,30 +213,32 @@ void loop()
     minFRAC = 0;
     
     FRACF = 1.0*(RFout0 * OutputDivider) / PFDRFout - INTA;
+    
+    /* Alternative fast approximation */
+    // MOD = (1 << 12) - 1;
+    // FRAC = (int) (1.0 * MOD * FRACF);
+    
     FRACD = FRACF;
 
     /* Dear god */
     while(MOD < 4096)
     {
-        
-        diff = 1.0*FRAC/MOD - FRACF;
-
-        if (fabs(diff) < FRACD)
-        {
-          FRACD = fabs(diff);
-          minMOD = MOD;
-          minFRAC = FRAC;
-        }
-        
-        if (diff == FRACF) {
-          break;
-        } else if (diff < 0)
-        {
-          FRAC = FRAC + 1;
-        } else
-        {
-          MOD = MOD + 1;
-        }
+      diff = 1.0*FRAC/MOD - FRACF;
+      if (fabs(diff) < FRACD)
+      {
+        FRACD = fabs(diff);
+        minMOD = MOD;
+        minFRAC = FRAC;
+      }
+      if (diff == FRACF) {
+        break;
+      } else if (diff < 0)
+      {
+        FRAC = FRAC + 1;
+      } else
+      {
+        MOD = MOD + 1;
+      }
 
       }
     
@@ -344,6 +346,11 @@ void loop()
     minFRAC = 0;
     
     FRACF = 1.0*(RFout1 * OutputDivider) / PFDRFout - INTA;
+
+    /* Alternative fast approximation */
+    // MOD = (1 << 12) - 1;
+    // FRAC = (int) (1.0 * MOD * FRACF);
+    
     FRACD = FRACF;
     
     while(MOD < 4096)
@@ -427,7 +434,7 @@ void loop()
     
   }
   */
-  
+    
 }   // fin loop
 
 
