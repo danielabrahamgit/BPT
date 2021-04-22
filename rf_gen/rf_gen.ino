@@ -1,70 +1,141 @@
-//   ADF4351 with fixed frequency
-//   Code modified from original code By Alain Fort F1CJN march 9,2019
-//   
-//
-//
-//  *************************************************** ENGLISH ***********************************************************
-//  This software is used to programm an ADF4351 with a fixed frequency, using a 10 MHz reference frequency.
-//  The frequency can be changed at line 80, using the same format.
-//  The reference frquency can be changed at line 70, using the same format (Default 10 MHz)
-//  ******************************************** HARDWARE IMPORTANT********************************************************
-//  With an Arduino UN0 : uses a resistive divider to reduce the voltage, MOSI (pin 11) to
-//  ADF DATA, SCK (pin13) to ADF CLK, Select (PIN 3) to ADF LE
-//  Resistive divider 560 Ohm with 1000 Ohm to ground on Arduino pins 11, 13 et 3 to adapt from 5V
-//  to 3.3V the digital signals DATA, CLK and LE send by the Arduino.
-//  Arduino pin 2 (for lock detection) directly connected to ADF4351 card MUXOUT.
-//  The ADF card is 5V powered by the ARDUINO (PINs +5V and GND are closed to the Arduino LED).
-
-
 #include <SPI.h>
+
 #define ADF4351_LE0 3
 #define ADF4351_LE1 4
-#define PLLOCK0 7
-#define PLLOCK1 8
 
-uint32_t registers[6] =  {0x4580A8, 0x80080C9, 0x4E42, 0x4B3, 0xBC8024, 0x580005} ; // 437 MHz avec ref à 25 MHz
+/* Represents the onboard registers */
+uint32_t registers[6] = {0x4580A8, 0x80080C9, 0x4E42, 0x4B3, 0xBC8024, 0x580005};
 
+/* Output power and internal reference clock */ 
+unsigned RF_PWR = 3;
+double F_REF = 25;
 
-int address,modif=0;
-unsigned int i = 0;
-double RFout0, REFin, INT, PFDRFout,  FRACF, RFACT, FRACD, diff;
-double RFoutMin = 35, RFoutMax = 4400, REFinMax = 250, PDFMax = 32;
-double RFout1 = RFoutMax;
-unsigned int long RFint,RFintold,INTA,RFcalc,PDRFout, MOD, FRAC, RFPWR, minMOD, minFRAC;
-byte OutputDivider;byte lock=2;
-unsigned int long reg0, reg1;
+/* Output Frequency for each board */
+double RFout0, RFout1;
+
+/* Frequency sweep range, incrimentation value, and sweep indicator */
+double rangeLow, rangeHigh, inc;
 boolean manual = true;
-double rangeLow, rangeHigh;
-double pilot_freq = 127.8;
-double inc = 1;
+
+/* Sweep Timing */
 long prevtime = 0;
 long curtime = 0;
 
-int pllock0, pllock1;
+/* Pilot tone frequency in MHz */
+double pilot_freq = 0;//127.8;
 
-void WriteRegister32(const uint32_t value, const int LE)   //Programme un registre 32bits
-{
+/* Tells us if we should update the board */
+boolean update = false;
+
+void setup() {
+  Serial.begin(9600);
+
+  /* Set LE pins as outputs */
+  pinMode(ADF4351_LE0, OUTPUT);
+  pinMode(ADF4351_LE1, OUTPUT);
+
+  /* Set LE pins */
+  digitalWrite(ADF4351_LE0, HIGH);
+  digitalWrite(ADF4351_LE1, HIGH);
+  
+  /* SPI init */
+  SPI.begin();                        
+  SPI.setDataMode(SPI_MODE0);
+  SPI.setBitOrder(MSBFIRST); 
+
+  /* Update the board's registers */
+  update = true;
+
+  user_interface();
+  /*
+  rangeLow = 100;
+  rangeHigh = 120;
+  inc = 1;
+  manual = false;
+  */
+}
+
+void loop() {
+  /* Sweep or manual mode */
+  if (!manual){
+    long curtime = millis();
+    if (curtime - prevtime > 500) {
+      if (RFout0 > rangeHigh) {
+        RFout0=rangeLow;
+        RFout1=rangeLow + pilot_freq;
+      } else {
+        RFout0 += inc;
+        RFout1 += inc;
+      }
+      update = true;
+      prevtime = curtime;
+    }
+  }
+  
+  if (update) {
+    int out_div = set_divider(RFout0);
+    set_power(RF_PWR);
+    set_freq(RFout0, out_div, F_REF);
+
+    /* Sets prescaler to 8/9 */
+    bitSet (registers[1], 27);
+
+    /* Sets the MUXOUT to tell us what the digital lock is */ 
+    bitSet (registers[2], 28);
+    bitSet (registers[2], 27);
+    bitClear (registers[2], 26);
+
+    SetADF4351(0);
+  }
+  
+  if (update) {
+    int out_div = set_divider(RFout1);
+    set_power(RF_PWR);
+    set_freq(RFout1, out_div, F_REF);
+
+    /* Sets prescaler to 8/9 */
+    bitSet (registers[1], 27);
+    
+    /* Sets the MUXOUT to tell us what the digital lock is */ 
+    bitSet (registers[2], 28);
+    bitSet (registers[2], 27);
+    bitClear (registers[2], 26);
+
+    SetADF4351(1);
+    update=false;
+  }
+}
+
+/* Writes a single register onto board selected by LE */
+void WriteRegister32(const uint32_t value, const int LE) {
+  /* First, pull the Load Enable low */
   if (LE==0) {
     digitalWrite(ADF4351_LE0, LOW);
-  }else{
+  } else {
     digitalWrite(ADF4351_LE1, LOW);
   }
-  for (int i = 3; i >= 0; i--)          // boucle sur 4 x 8bits
-  SPI.transfer((value >> 8 * i) & 0xFF); // décalage, masquage de l'octet et envoi via SPI
+
+  /* Next, we load in 32 bits */
+  for (int i = 3; i >= 0; i--)
+  SPI.transfer((value >> 8 * i) & 0xFF);
+
+  /* Pull high then low again */
   if (LE==0) {
     digitalWrite(ADF4351_LE0, HIGH);
     digitalWrite(ADF4351_LE0, LOW);
-  }else{
+  } else {
     digitalWrite(ADF4351_LE1, HIGH);
     digitalWrite(ADF4351_LE1, LOW);
   }
 }
 
-void SetADF4351(const int LE)  // Programme tous les registres de l'ADF4351
-{ for (int i = 5; i >= 0; i--)  // programmation ADF4351 en commencant par R5
-    WriteRegister32(registers[i], LE);
+/* Writes all 6 registers via the registers global structure */ 
+void SetADF4351(const int LE) {
+  for (int i = 5; i >= 0; i--) 
+  WriteRegister32(registers[i], LE);
 }
 
+/* Determines what kind of output we want */
 void user_interface() {
   Serial.println("Please select which mode you would like:\n");
   Serial.println("'s' - Sweep through frequencies in a defined range");
@@ -110,231 +181,83 @@ void user_interface() {
   }
 }
 
-
-//************************************ Setup ****************************************
-  void setup() {
-  Serial.begin (9600); 					//  Serial to the PC via Arduino "Serial Monitor"  at 9600
-
-  pinMode(PLLOCK0, INPUT);  			// PIN 7 en entree pour lock
-  pinMode(PLLOCK1, INPUT);  // PIN 7 en entree pour lock
+/* Sets the corresponding frequency bits */ 
+void set_freq(float freq, float divider, float fref) {
+  unsigned int long INTA = (freq * divider) / fref;
   
-  pinMode(ADF4351_LE0, OUTPUT);          // Setup pins
-  pinMode(ADF4351_LE1, OUTPUT);          // Setup pins
-  pinMode(LED_BUILTIN, OUTPUT);        // Setup pins
-  pinMode(6, OUTPUT);
-  digitalWrite(ADF4351_LE0, HIGH);
-  digitalWrite(ADF4351_LE1, HIGH);
-  SPI.begin();                          // Init SPI bus
-  SPI.setDataMode(SPI_MODE0);           // CPHA = 0 et Clock positive
-  SPI.setBitOrder(MSBFIRST);            // poids forts en tête
-
-  pllock0 = 0;
-  pllock1 = 0;
-  modif = 1;
-
-  user_interface();
-} // Fin setup
-
-void loop()
-{
- //********************************************** 
-  if (!manual){
-    long curtime = millis();
-    if (curtime - prevtime > 50) {
-      if (RFout0 > rangeHigh) {
-        RFout0=rangeLow;
-        RFout1=rangeLow + pilot_freq;
-      } else {
-        RFout0 += inc;
-        RFout1 += inc;
-      }
-      modif = 1;
-      prevtime = curtime;
-    }
-  }
-  RFPWR = 3; // 0->3
-  PFDRFout=10; // Frequence de reference
- //********************************************
+  double FRACF = 1.0*(freq * divider) / fref - INTA;
   
-  if  (modif==1) {
-    if (RFout0 < 68.75) {
-      OutputDivider = 64;
-      bitWrite (registers[4], 22, 1);
-      bitWrite (registers[4], 21, 1);
-      bitWrite (registers[4], 20, 0);
-    }
-    else if (RFout0 < 137.5) {
-      OutputDivider = 32;
-      bitWrite (registers[4], 22, 1);
-      bitWrite (registers[4], 21, 0);
-      bitWrite (registers[4], 20, 1);
-    }
-    else if (RFout0 < 275)  {
-      OutputDivider = 16;
-      bitWrite (registers[4], 22, 1);
-      bitWrite (registers[4], 21, 0);
-      bitWrite (registers[4], 20, 0);
-    }
-    else if (RFout0 < 550)  {
-      OutputDivider = 8;
-      bitWrite (registers[4], 22, 0);
-      bitWrite (registers[4], 21, 1);
-      bitWrite (registers[4], 20, 1);
-    }
-    else if (RFout0 < 1100) {
-      OutputDivider = 4;
-      bitWrite (registers[4], 22, 0);
-      bitWrite (registers[4], 21, 1);
-      bitWrite (registers[4], 20, 0);
-    }
-    else if (RFout0 < 2200) {
-      OutputDivider = 2;
-      bitWrite (registers[4], 22, 0);
-      bitWrite (registers[4], 21, 0);
-      bitWrite (registers[4], 20, 1);
-    }
-    else if (RFout0 >= 2200) {
-      OutputDivider = 1;
-      bitWrite (registers[4], 22, 0);
-      bitWrite (registers[4], 21, 0);
-      bitWrite (registers[4], 20, 0);
-    }
-
-    /* Potential Fix 
-    // Clear Pwr bits */
-    registers[4] &= ~(3 << 3);
-    registers[4] = registers[4] + (RFPWR<<3); // set power level
-    
-    INTA = (RFout0 * OutputDivider) / PFDRFout;
-    
-    FRACF = 1.0*(RFout0 * OutputDivider) / PFDRFout - INTA;
-    
-    /* Alternative fast approximation*/ 
-    MOD = (1 << 12) - 1;
-    FRAC = (int) (1.0 * MOD * FRACF);
-    
-    registers[0] = 0;
-    registers[0] = INTA << 15; // OK
-    FRAC = FRAC << 3;
-    /* This might be an issue because we will accumulate... */
-    registers[0] = registers[0] + FRAC;
-    /* Fix: */
-    //registers[0] = registers[0] & ( + FRAC;
-
-    registers[1] = 0;
-    registers[1] = MOD << 3;
-    registers[1] = registers[1] + 1 ; // ajout de l'adresse "001"
-    bitSet (registers[1], 27); // Prescaler sur 8/9
-    bitSet (registers[2], 28); // Digital lock == "110" sur b28 b27 b26
-    bitSet (registers[2], 27); // digital lock 
-    bitClear (registers[2], 26); // digital lock
-
-    SetADF4351(0);  // Programme tous les registres de l'ADF4351
-  }
+  /* fast approximation*/ 
+  unsigned int long MOD = (1 << 12) - 1;
+  unsigned int long FRAC = (int) (1.0 * MOD * FRACF);
   
-  if (modif==1) {
-    if (RFout1 < 68.75) {
-      OutputDivider = 64;
-      bitWrite (registers[4], 22, 1);
-      bitWrite (registers[4], 21, 1);
-      bitWrite (registers[4], 20, 0);
-    }
-    else if (RFout1 < 137.5) {
-      OutputDivider = 32;
-      bitWrite (registers[4], 22, 1);
-      bitWrite (registers[4], 21, 0);
-      bitWrite (registers[4], 20, 1);
-    }
-    else if (RFout1 < 275)  {
-      OutputDivider = 16;
-      bitWrite (registers[4], 22, 1);
-      bitWrite (registers[4], 21, 0);
-      bitWrite (registers[4], 20, 0);
-    }
-    else if (RFout1 < 550)  {
-      OutputDivider = 8;
-      bitWrite (registers[4], 22, 0);
-      bitWrite (registers[4], 21, 1);
-      bitWrite (registers[4], 20, 1);
-    }
-    else if (RFout1 < 1100) {
-      OutputDivider = 4;
-      bitWrite (registers[4], 22, 0);
-      bitWrite (registers[4], 21, 1);
-      bitWrite (registers[4], 20, 0);
-    }
-    else if (RFout1 < 2200) {
-      OutputDivider = 2;
-      bitWrite (registers[4], 22, 0);
-      bitWrite (registers[4], 21, 0);
-      bitWrite (registers[4], 20, 1);
-    }
-    else if (RFout1 >= 2200) {
-      OutputDivider = 1;
-      bitWrite (registers[4], 22, 0);
-      bitWrite (registers[4], 21, 0);
-      bitWrite (registers[4], 20, 0);
-    }
-    
-    // Clear Pwr bits
-    registers[4] &= ~(3 << 3);
+  registers[0] = 0;
+  registers[0] = INTA << 15; // OK
+  FRAC = FRAC << 3;
+  /* This might be an issue because we will accumulate... */
+  registers[0] = registers[0] + FRAC;
+  /* Fix: */
+  //registers[0] = registers[0] & ( + FRAC;
+  
+  registers[1] = 0;
+  registers[1] = MOD << 3;
+  registers[1] = registers[1] + 1 ; // ajout de l'adresse "001"
+}
 
-    registers[4] = registers[4] + (RFPWR<<3); // set power level
-    
-    INTA = (RFout1 * OutputDivider) / PFDRFout;
+/* Sets the power bits */
+void set_power(int pwr) {
+  /* Clear Pwr bits */
+  registers[4] &= ~(3 << 3);
+  /* Set power level */
+  registers[4] = registers[4] + (pwr<<3); 
+}
 
-    FRACF = 1.0*(RFout1 * OutputDivider) / PFDRFout - INTA;
-
-    // Alternative fast approximation 
-    MOD = (1 << 12) - 1;
-    FRAC = (int) (1.0 * MOD * FRACF); 
-    RFACT = 1.0*PFDRFout/OutputDivider * (INTA + (1.0*FRAC/MOD));
-    
-    registers[0] = 0;
-    registers[0] = INTA << 15; // OK
-    FRAC = FRAC << 3;
-    registers[0] = registers[0] + FRAC;
-
-    registers[1] = 0;
-    registers[1] = MOD << 3;
-    registers[1] = registers[1] + 1 ; // ajout de l'adresse "001"
-    bitSet (registers[1], 27); // Prescaler sur 8/9
-
-    bitSet (registers[2], 28); // Digital lock == "110" sur b28 b27 b26
-    bitSet (registers[2], 27); // digital lock 
-    bitClear (registers[2], 26); // digital lock
-   
-    SetADF4351(1);  // Programme tous les registres de l'ADF4351
-    modif=0;
- 
+/* Sets the frequency divider value */
+int set_divider(float RFout) {
+  int divider;
+  if (RFout < 68.75) {
+    divider = 64;
+    bitWrite (registers[4], 22, 1);
+    bitWrite (registers[4], 21, 1);
+    bitWrite (registers[4], 20, 0);
   }
-   // Maybe this caused the bug!
-   /*
-   if (pllock0 == 0) {
-    pllock0 = digitalRead(PLLOCK0);
-    //Serial.print(".");
-    if (pllock0) Serial.print(" PLL0 Locked! ");
-    
+  else if (RFout < 137.5) {
+    divider = 32;
+    bitWrite (registers[4], 22, 1);
+    bitWrite (registers[4], 21, 0);
+    bitWrite (registers[4], 20, 1);
   }
-
-  if (pllock1 == 0) {
-    pllock1 = digitalRead(PLLOCK1);
-    //Serial.println(".");
-    if (pllock1) Serial.print(" PLL1 Locked! ");
-    
+  else if (RFout < 275)  {
+    divider = 16;
+    bitWrite (registers[4], 22, 1);
+    bitWrite (registers[4], 21, 0);
+    bitWrite (registers[4], 20, 0);
   }
-  */
-    
-}   // fin loop
-
-
-double fabs(double x)
-{
-  if (x < 0) {
-    x = -x;
+  else if (RFout < 550)  {
+    divider = 8;
+    bitWrite (registers[4], 22, 0);
+    bitWrite (registers[4], 21, 1);
+    bitWrite (registers[4], 20, 1);
   }
-
-  return x;
+  else if (RFout < 1100) {
+    divider = 4;
+    bitWrite (registers[4], 22, 0);
+    bitWrite (registers[4], 21, 1);
+    bitWrite (registers[4], 20, 0);
+  }
+  else if (RFout < 2200) {
+    divider = 2;
+    bitWrite (registers[4], 22, 0);
+    bitWrite (registers[4], 21, 0);
+    bitWrite (registers[4], 20, 1);
+  }
+  else if (RFout >= 2200) {
+    divider = 1;
+    bitWrite (registers[4], 22, 0);
+    bitWrite (registers[4], 21, 0);
+    bitWrite (registers[4], 20, 0);
+  }
+  return divider;
 }
 
 /*
@@ -389,7 +312,7 @@ double fabs(double x)
 
     registers[4] = registers[4] + (RFPWR<<3); // set power level
     
-    INTA = (RFout1 * OutputDivider) / PFDRFout;
+    INTA = (RFout1 * OutputDivider) / F_REF;
 
     // search for closest fraction
     MOD = 1;
@@ -469,7 +392,15 @@ double fabs(double x)
     modif=0;
  
   }
-  */
 
+  double fabs(double x)
+{
+  if (x < 0) {
+    x = -x;
+  }
+
+  return x;
+}
+  */
  
   
