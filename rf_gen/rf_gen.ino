@@ -2,10 +2,18 @@
 
 #define ADF4351_LE0 3
 #define ADF4351_LE1 4
-#define TIME_PER_FREQ 2000
+#define TIME_PER_FREQ 200
+
+#define NOISE_SELECT 3
+
+/* resets the arduino */
+void(* resetFunc) (void) = 0;
+
+/* Startup state for the registers */
+uint32_t init_state[6] = {0x4580A8, 0x80080C9, 0x4E42, 0x4B3, 0xBC8024, 0x580005};
 
 /* Represents the onboard registers */
-uint32_t registers[6] = {0x4580A8, 0x80080C9, 0x4E42, 0x4B3, 0xBC8024, 0x580005};
+uint32_t registers[6];
 
 /* Output power and internal reference clock */ 
 unsigned RF_PWR = 3;
@@ -49,9 +57,17 @@ void setup() {
 
   /* Uses serial port to interact with board */
   user_interface();
+
+  /* Set all registers */
+  for (int i = 0; i < 6; i++) {
+    registers[i] = init_state[i];
+  }
 }
 
 void loop() {
+  /* Check for reset command */
+  check_reset();
+  
   /* Sweep or manual mode */
   if (!manual){
     long curtime = millis();
