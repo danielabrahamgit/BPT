@@ -153,5 +153,30 @@ int set_divider(float RFout) {
   }
   return divider;
 }
- 
+
+int get_divider(float RFout) {
+  int divider;
+  if (RFout < 68.75) {
+    divider = 64;
+  }
+  else if (RFout < 137.5) {
+    divider = 32;
+  }
+  else if (RFout < 275)  {
+    divider = 16;
+  }
+  else if (RFout < 550)  {
+    divider = 8;
+  }
+  else if (RFout < 1100) {
+    divider = 4;
+  }
+  else if (RFout < 2200) {
+    divider = 2;
+  }
+  else if (RFout >= 2200) {
+    divider = 1;
+  }
+  return divider;
+}
   
