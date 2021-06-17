@@ -9,12 +9,15 @@ void user_interface() {
   /* Starting scren */
   Serial.println("Please select which mode you would like:\n");
   Serial.println("'s' - Sweep through frequencies in a defined range");
-  Serial.println("'m' - Manually Select both frequencies\n");
+  Serial.println("'m' - Manually Select both frequencies");
+  Serial.print("Selection: ");
 
   /* Read output type */
   while (Serial.available() == 0);
   char inp = Serial.read();
   while (Serial.available() != 0) Serial.read();
+  Serial.println(inp);
+  
   /* Sweep mode */
   if (inp == 's') {
     Serial.print("Enter the low frequency(MHz): ");
