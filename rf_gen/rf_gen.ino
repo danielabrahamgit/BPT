@@ -8,7 +8,7 @@ uint32_t registers[6] = {0x4580A8, 0x80080C9, 0x4E42, 0x4B3, 0xBC8024, 0x580005}
 
 /* Output power and internal reference clock */ 
 unsigned RF_PWR = 3;
-double F_REF = 25;
+double F_REF = 10;
 
 /* Output Frequency for each board */
 double RFout0, RFout1;
@@ -22,7 +22,7 @@ long prevtime = 0;
 long curtime = 0;
 
 /* Pilot tone frequency in MHz */
-double pilot_freq = 1027.8;
+double pilot_freq = 0;//127.0;
 
 /* Tells us if we should update the board */
 boolean update_board = false;
