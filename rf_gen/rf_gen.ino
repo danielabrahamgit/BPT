@@ -2,9 +2,18 @@
 
 #define ADF4351_LE0 3
 #define ADF4351_LE1 4
+#define TIME_PER_FREQ 200
+
+#define NOISE_SELECT 3
+
+/* resets the arduino */
+void(* resetFunc) (void) = 0;
+
+/* Startup state for the registers */
+uint32_t init_state[6] = {0x4580A8, 0x80080C9, 0x4E42, 0x4B3, 0xBC8024, 0x580005};
 
 /* Represents the onboard registers */
-uint32_t registers[6] = {0x4580A8, 0x80080C9, 0x4E42, 0x4B3, 0xBC8024, 0x580005};
+uint32_t registers[6];
 
 /* Output power and internal reference clock */ 
 unsigned RF_PWR = 3;
@@ -22,7 +31,7 @@ long prevtime = 0;
 long curtime = 0;
 
 /* Pilot tone frequency in MHz */
-double pilot_freq = 0;//127.0;
+double pilot_freq = 127.8;
 
 /* Tells us if we should update the board */
 boolean update_board = false;
@@ -48,13 +57,21 @@ void setup() {
 
   /* Uses serial port to interact with board */
   user_interface();
+
+  /* Set all registers */
+  for (int i = 0; i < 6; i++) {
+    registers[i] = init_state[i];
+  }
 }
 
 void loop() {
+  /* Check for reset command */
+  check_reset();
+  
   /* Sweep or manual mode */
   if (!manual){
     long curtime = millis();
-    if (curtime - prevtime > 500) {
+    if (curtime - prevtime > TIME_PER_FREQ) {
       if (RFout0 > rangeHigh) {
         RFout0=rangeLow;
         RFout1=rangeLow + pilot_freq;
@@ -64,7 +81,9 @@ void loop() {
         Serial.print("RFOUT0: ");
         Serial.print(RFout0);
         Serial.print("\t\t RFOUT1: ");
-        Serial.println(RFout1);
+        Serial.print(RFout1);
+        Serial.print("\t\t Divider0: ");
+        Serial.println(get_divider(RFout0));
       }
       update_board = true;
       prevtime = curtime;
